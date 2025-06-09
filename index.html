@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>CIDR IP 子网展开工具</title>
+  <style>
+    :root {
+      --bg-color: #f4f6f8;
+      --text-color: #333;
+      --btn-bg: #007BFF;
+      --btn-hover: #0056b3;
+      --output-bg: #f9f9f9;
+    }
+
+    body.dark-mode {
+      --bg-color: #1e1e1e;
+      --text-color: #f5f5f5;
+      --btn-bg: #555;
+      --btn-hover: #777;
+      --output-bg: #2d2d2d;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+      position: relative;
+      background-color: rgb(71, 148, 236);
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 0 15px rgba(0,0,0,0.1);
+      padding: 30px;
+      position: relative;
+    }
+
+    h1 {
+      text-align: center;
+      /*color: var(--text-color);*/
+      color: #000;
+    }
+
+    textarea {
+      width: 100%;
+      height: 120px;
+      padding: 10px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+      font-size: 16px;
+      resize: vertical;
+    }
+
+    button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      background-color: var(--btn-bg);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    button:hover {
+      background-color: var(--btn-hover);
+    }
+
+    .output {
+      margin-top: 20px;
+      background: var(--output-bg);
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-y: auto;
+      max-height: 400px;
+    }
+
+    .error {
+      color: red;
+      font-weight: bold;
+    }
+
+    .success {
+      color: green;
+      font-weight: bold;
+    }
+
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #4CAF50;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 5px;
+      z-index: 1000;
+      display: none;
+    }
+
+    .dark-mode-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+    }
+
+    .dark-mode-toggle button {
+      background: transparent;
+      color: var(--text-color);
+      font-size: 20px;
+      border: none;
+      padding: 5px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .dark-mode-toggle button:hover {
+      background: rgb(243, 200, 200);
+    }
+    p {color: rgb(7, 6, 6);}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>CIDR IP 子网展开工具</h1>
+    <p>请在下方输入 CIDR 地址（每行一个），支持 IPv4 和 IPv6：</p>
+    <textarea id="cidrInput" placeholder="例如：192.168.0.0/24\n2001:db8::/32"></textarea>
+    <br>
+    <button onclick="generateIPs()">生成 IP 列表</button>
+
+    <div class="output" id="output"></div>
+
+    <div class="notification" id="notification">复制成功！</div>
+
+    <div style="margin-top: 10px;">
+      <button onclick="copyToClipboard()" id="copyBtn" disabled>复制结果</button>
+      <button onclick="exportAsTXT()" id="exportTxtBtn" disabled>导出为 TXT</button>
+      <button onclick="exportAsCSV()" id="exportCsvBtn" disabled>导出为 CSV (Excel)</button>
+    </div>
+
+    <!-- 夜间模式按钮 -->
+    <div class="dark-mode-toggle">
+      <button onclick="toggleDarkMode()" id="darkModeBtn">🌙</button>
+    </div>
+  </div>
+
+  <script>
+    let generatedIPs = [];
+    let isDarkMode = false;
+
+    function parseCIDR(cidr) {
+      const [ip, prefixStr] = cidr.split('/');
+      const prefix = parseInt(prefixStr, 10);
+
+      if (ip.includes(':')) {
+        const ipArray = expandIPv6(ip);
+        return generateIPv6Range(ipArray, prefix);
+      } else {
+        const ipParts = ip.split('.').map(Number);
+        return generateIPv4Range(ipParts, prefix);
+      }
+    }
+
+    // IPv4 地址生成函数
+    function generateIPv4Range(ipArray, prefix) {
+      const hostBits = 32 - prefix;
+      const network = ipArrayToBigInt(ipArray);
+      const start = network;
+      const end = network + (1n << BigInt(hostBits)) - 1n;
+      const ips = [];
+
+      for (let i = 0; i < (1 << hostBits); i++) {
+        const num = start + BigInt(i);
+        ips.push(bigIntegerToIPv4(num));
+      }
+
+      return ips;
+    }
+
+    function ipArrayToBigInt(ipArray) {
+      let result = 0n;
+      for (const octet of ipArray) {
+        result = result * 256n + BigInt(octet);
+      }
+      return result;
+    }
+
+    function bigIntegerToIPv4(num) {
+      let ip = [];
+      for (let i = 0; i < 4; i++) {
+        ip.unshift(String(Number(num % 256n)));
+        num /= 256n;
+      }
+      return ip.join('.');
+    }
+
+    // IPv6 地址生成函数
+    function expandIPv6(ip) {
+      const parts = ip.split(':');
+      const fullParts = [];
+      let zeros = 0;
+
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i] === '') {
+          zeros++;
+          if (i === 0) fullParts.push('0000');
+          else if (i === parts.length - 1) fullParts.push('0000');
+          else continue;
+        } else {
+          fullParts.push(parts[i].padStart(4, '0'));
+        }
+      }
+
+      if (zeros > 0) {
+        const missing = 8 - fullParts.length;
+        for (let i = 0; i < missing; i++) {
+          fullParts.splice(zeros > 0 ? 1 : fullParts.length, 0, '0000');
+        }
+      }
+
+      return fullParts.map(p => parseInt(p, 16));
+    }
+
+    function generateIPv6Range(ipArray, prefix) {
+      const hostBits = 128 - prefix;
+      const network = BigInt(ipArray.reduce((acc, val) => acc * 65536n + BigInt(val), 0n));
+      const start = network;
+      const end = start + (1n << BigInt(hostBits)) - 1n;
+      const ips = [];
+
+      const MAX_IPS = 2000; // 最多生成 2000 个地址
+      const step = (end - start) / BigInt(MAX_IPS);
+
+      for (let i = 0; i < MAX_IPS; i++) {
+        let num = start + BigInt(i) * step;
+        ips.push(bigIntegerToIPv6(num));
+      }
+
+      return ips;
+    }
+
+    function bigIntegerToIPv6(num) {
+      let hex = num.toString(16).toUpperCase().padStart(32, '0');
+      const groups = [];
+      for (let j = 0; j < 8; j++) {
+        groups.push(hex.slice(j * 4, (j + 1) * 4));
+      }
+      let compacted = groups.map(g => g || '').join(':');
+      compacted = compacted.replace(/:+/g, m => m.length > 1 ? ':' : m);
+      return compacted;
+    }
+
+    function generateIPs() {
+      const input = document.getElementById('cidrInput').value;
+      const lines = input.trim().split('\n');
+      const outputDiv = document.getElementById('output');
+      outputDiv.innerHTML = '';
+
+      generatedIPs = [];
+      let errors = [];
+
+      for (let line of lines) {
+        line = line.trim();
+        if (!line) continue;
+
+        try {
+          const ips = parseCIDR(line);
+          generatedIPs = generatedIPs.concat(ips);
+        } catch (e) {
+          errors.push(`<div class="error">${line}：${e.message}</div>`);
+        }
+      }
+
+      if (errors.length > 0) {
+        outputDiv.innerHTML += `<div>${errors.join('')}</div>`;
+      }
+
+      if (generatedIPs.length > 0) {
+        outputDiv.innerHTML += `<div class="success">共找到 ${generatedIPs.length} 个 IP 地址：</div>`;
+        outputDiv.innerHTML += `<pre>${generatedIPs.join('\n')}</pre>`;
+      } else {
+        outputDiv.innerHTML += '<div>未找到有效 IP。</div>';
+      }
+
+      updateButtons();
+    }
+
+    function updateButtons() {
+      const copyBtn = document.getElementById('copyBtn');
+      const exportTxtBtn = document.getElementById('exportTxtBtn');
+      const exportCsvBtn = document.getElementById('exportCsvBtn');
+
+      if (generatedIPs.length > 0) {
+        copyBtn.disabled = false;
+        exportTxtBtn.disabled = false;
+        exportCsvBtn.disabled = false;
+      } else {
+        copyBtn.disabled = true;
+        exportTxtBtn.disabled = true;
+        exportCsvBtn.disabled = true;
+      }
+    }
+
+    function copyToClipboard() {
+      if (generatedIPs.length === 0) return;
+
+      navigator.clipboard.writeText(generatedIPs.join('\n')).then(() => {
+        const notification = document.getElementById('notification');
+        notification.style.display = 'block';
+        setTimeout(() => {
+          notification.style.display = 'none';
+        }, 3000);
+      }).catch(err => {
+        alert('复制失败：' + err);
+      });
+    }
+
+    function exportAsTXT() {
+      if (generatedIPs.length === 0) return;
+
+      const blob = new Blob([generatedIPs.join('\n')], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cidr_ips.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportAsCSV() {
+      if (generatedIPs.length === 0) return;
+
+      const blob = new Blob([generatedIPs.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cidr_ips.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function toggleDarkMode() {
+      document.body.classList.toggle('dark-mode');
+      isDarkMode = !isDarkMode;
+      const btn = document.getElementById('darkModeBtn');
+      btn.innerHTML = isDarkMode ? '☀️' : '🌙';
+    }
+  </script>
+</body>
+</html>
